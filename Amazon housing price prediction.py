@@ -5,10 +5,11 @@ import seaborn as sns
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.feature_selection import SelectKBest, f_regression
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error
 import re
+import statsmodels as sm 
 
 housing_data = pd.read_csv(r"C:\Users\marti\Downloads\American_Housing_Data_20231209.csv")
 
@@ -73,8 +74,8 @@ housing_data['City_encoded'] = housing_data.groupby('location')['Price'].transfo
 
 features = ['Zip Code','Beds','Baths','Living Space','Zip Code Population','Zip Code Density','Longitude','City_encoded']
 plt.figure( figsize=(8,20))
-for num in range(1, (len(features))):
-    plt.subplot(8,1,num)
+for num in range(1, (len(features)+1)):
+    plt.subplot(len(features),1,num)
     plt.plot(housing_data['Price'],housing_data[features[num-1]])
 plt.show()
 
@@ -82,7 +83,7 @@ plt.show()
  
 plt.figure(figsize=(20,8))
 for num in range(1, len(features)+1):
-    plt.subplot(1,8,num)
+    plt.subplot(1,len(features),num)
     plt.boxplot(housing_data[features[num-1]])
     plt.title(features[num-1])
 plt.show()
@@ -101,32 +102,52 @@ def drop_outlier (data, features):
 
 cleaned_housing_data = drop_outlier(housing_data, outlied_feature)
 
-# Feature Selection and Model training 
+# Feature Selection and Model training to check the best feature for OLS model 
 
-scalar = MinMaxScaler()
+def best_feature(x_train,y_train):
+    r2_score_values =[]; rmse_values = []
+    for k in range(1,len(x_train.columns)+1):
+        selector = SelectKBest(f_regression,k=k)
+        selector.fit(x_train,y_train)
+
+        selected_x_train= selector.transform(x_train)
+        selected_x_test = selector.transform(x_test)
+
+        model = LinearRegression()
+        model.fit(selected_x_train,y_train)
+        kbest_pred = model.predict(selected_x_test)
+        rmse_score_kbest = round(np.sqrt(mean_squared_error(y_test, kbest_pred)),3)
+        r2_score_kbest = r2_score (y_test,kbest_pred)
+        r2_score_values.append(r2_score_kbest)
+        rmse_values.append(rmse_score_kbest)
+    rmse_percentage_change = [0]
+    for i in range(1,len(rmse_values)):
+        change = (rmse_values[i+1] - rmse_values[i])/rmse_values[i] * 100
+        if abs(change) < 5:
+           return i + 1 
+    return len(x_train.columns)
+     
+
+# OLS Regression 
+
+scalar = StandardScaler()
 x = cleaned_housing_data[features]
 y = cleaned_housing_data['Price']
 scaled_features = scalar.fit_transform(x)
 scaled_features =pd.DataFrame(scaled_features, columns = features)
-scaled_features
 x_train,x_test,y_train,y_test = train_test_split(scaled_features,y,test_size= 0.2, random_state=42)
 model = LinearRegression()
+k_best_value = best_feature(x_train, y_train)
 
-rmse = []; r2_score_value = []
-for k in range(1,len(features)+1):
-    selector = SelectKBest(f_regression,k=k)
-    selector.fit(x_train,y_train)
+selector = SelectKBest(f_regression,k = k_best_value)
+selector.fit(x_train,y_train)
 
-    selected_x_train= selector.transform(x_train)
-    selected_x_test = selector.transform(x_test)
+selected_x_train = selector.transform(x_train)
+selected_x_test = selector.transform(x_test)
 
-    model.fit(selected_x_train,y_train)
-    kbest_pred = model.predict(selected_x_test)
-    rmse_score_kbest = round(np.sqrt(mean_squared_error(y_test, kbest_pred)),3)
-    r2_score_kbest = r2_score (y_test,kbest_pred)
-    r2_score_value.append(r2_score_kbest)
-    rmse.append(rmse_score_kbest)
+model.fit(selected_x_train, y_train)
+pred_val = model.predict(selected_x_test)
 
-
-print(rmse,r2_score_value)
-
+r2_score_value = r2_score(y_test, pred_val)
+rmse_value = np.sqrt(mean_squared_error(y_test, pred_val))
+print(f'The r sqaured and root mean square of the model is {r2_score_value} and {rmse_value} respectively')

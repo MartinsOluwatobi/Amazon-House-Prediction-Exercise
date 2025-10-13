@@ -2,41 +2,102 @@ import pandas as pd
 import seaborn as sns 
 import numpy as np 
 import matplotlib.pyplot as plt 
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression 
+from sklearn.preprocessing import StandardScaler 
+from sklearn.model_selection import train_test_split 
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.feature_selection import f_regression, SelectKBest
 
-path = r"C:\Users\marti\OneDrive\Documents\Melbourne_Housing.csv"
+#import data 
+path = r"C:\Users\marti\OneDrive\Documents\Melbourne_Housing.csv" 
 data = pd.read_csv(path, na_values=['missing','inf'])
 
-data = data.dropna(subset= ['Distance'])
+#Drop duplicate data point
+data= data.drop_duplicates()
+
+#The only single missing row value in Distance column was filled using the mean distance of the houses in it region group
+data['Distance'] = data['Distance'].fillna(value = data.groupby(['Regionname'])['Distance'].transform('mean'))
+
+#date datatype was coversion and data extraction
 data['Date'] =  pd.to_datetime(data['Date'], format ='%d-%m-%Y')
-data= data.dropna(subset =['Distance'])
-data['Bedroom']= data['Bedroom'].fillna(value = data['Rooms'])
-empty_bedroom = data['Bedroom']==0
-data.loc[empty_bedroom,'Bedroom'] = data.loc[empty_bedroom,'Rooms']
-condition = data['Bedroom'] > data['Rooms']
+data['Day'] = data['Date'].dt.day 
+data['Month'] = data['Date'].dt.month
+data['Year'] = data['Date'].dt.year
+data.drop(['Date'], axis = 1, inplace= True)
+
+"""I observed that majority of the Houses have the same number of rooms as their bedroom. Therefore, I used rooms to fill the na value in Bedroom For scenario where Bedroom was noted to be zero, I filled that with the value of rooms on the same column. For scenarion where bedroom is greater than rooms, the value of the bedroom is replaced with the value of the rooms """
+
+data['Bedroom']= data['Bedroom'].fillna(value = data['Rooms']) 
+empty_bedroom = data['Bedroom']==0 
+data.loc[empty_bedroom,'Bedroom'] = data.loc[empty_bedroom,'Rooms'] 
+condition = data['Bedroom'] > data['Rooms'] 
 data.loc[condition, 'Rooms'] = data.loc[condition, 'Bedroom']
-data['Bathroom'] = data['Bathroom'].fillna(value= data.groupby(['Rooms','Type'])['Bathroom'].transform('mean').round(0))
-data['Car'] = data['Car'].fillna(value= data.groupby(['Regionname','Type'])['Car'].transform('mean').round(0))
-data['Landsize'] = data['Landsize'].fillna(value = data.groupby(['Regionname','Rooms'])['Landsize'].transform('mean').round(0))
-data= data.drop(['BuildingArea','YearBuilt'],axis = 1)
+
+"""During EDA, the distribution of Bathroom, Car and Landsize columns were evaluated and the right centre of tendency was used to fill the na values for each of the columns"""
+
+data['Bathroom'] = data['Bathroom'].fillna(value= data.groupby(['Rooms','Type'])['Bathroom'].transform('mean').round(0)) 
+data['Car'] = data['Car'].fillna(data['Car'].median()) 
+data['Landsize'] = data['Landsize'].fillna(data['Landsize'].median())
+
+# The percentage of the nan values for BuildingArea and YearrBuilt were considered to be too much and I decided to drop the columns
+
+data= data.drop(['BuildingArea','YearBuilt'],axis = 1) 
 data= data.dropna(subset= ['Landsize'])
-Outlied_data, Outlied_dataframe = [], pd.DataFrame()
-numerical_data = data.select_dtypes(include = 'number')
-for i in numerical_data.columns[:-1]:
-    Q3= data[i].quantile(0.75)
-    Q1= data[i].quantile(0.25)
-    IQR = Q3 - Q1
-    lower_limit = Q1 - 1.5*IQR
-    higher_limit = Q3 + 1.5*IQR
-    outliers = data[(data[i] < lower_limit) | (data[i] > higher_limit)]
-    if outliers.shape[0] > 0: 
-       Outlied_data.append(i)
-       Outlied_dataframe = pd.concat([Outlied_dataframe, outliers])
-Outlied_dataframe.drop_duplicates()
-data = data.drop(Outlied_dataframe.index)
+
+def handleNan(data,columns): 
+    #check for the skewness of the column 
+    for column in columns: 
+        column_skew_value = data[column].skew() 
+        if abs(column_skew_value)> 0.5: 
+            data[column].fillna(data[column].median(),inplace = True) 
+        else: data[column].fillna(data[column].mean(), inplace = True) 
+    return
+
+#Handling Outlied datapoint by filling them with the median value of their respective column
+
+numerical_data = data.select_dtypes(include = 'number') 
+for i in numerical_data.columns[:-1]: 
+    Q3= data[i].quantile(0.75) 
+    Q1= data[i].quantile(0.25) 
+    IQR = Q3 - Q1 
+    lower_limit = Q1 - 1.5 * IQR 
+    higher_limit = Q3 + 1.5*IQR 
+    outliers_conditions= (data[i] < lower_limit) | (data[i] > higher_limit)]
+    data.loc[outliers_conditions,i]= data[i].median()
+
+# OneHotEncoding Categorical data  
+categorical_data = data.select_dtypes(include = ['string','object'])
+encoder = ColumnTransformer(transformer = [('cat', OneHotEncoder(sparse_output= False, handle_unknown = 'ignore'), categorical_data)],remainder= 'passthrough'))
+encoded = encoder.fit_transform(data)
+encoded_array = pd.DataFrame(encoded, columns = encoder.get_feature_names_out())
+
+# Changing the columns name after encoder altered it 
+data_columns=data.select_dtypes(['number','datetime']).columns.to_list() 
+for i in range(len(data.select_dtypes(['number']).columns.to_list())):
+    old_name= 'remainder__' + data_columns[i]
+    new_name = data_columns[i]
+    encoded_array.rename(columns= {old_name: new_name},inplace= True)
+
+# feature selection
+target = encoded_array['Price']
+feature = encoded_array.drop(['Price'],axis = 1)
+x_train,x_test,y_train,y_test = train_test_split(feature,target)
+x_train,x_test,y_train,y_test = train_test_split(encoded_array[feature],encoded_array['Price'])
+model = LinearRegression(); rmse_list = []
+for k in range(1,len(feature)+1):
+    selector = SelectKBest(f_regression,k = k)
+    selector.fit(encoded_array[feature],encoded_array['Price'])
+
+    x_train_selected = selector.transform(x_train)
+    x_test_selected = selector.transform(x_test)
+
+    model.fit(x_train_selected,y_train)
+    y_pred = model.predict(x_test_selected)
+    root_mean_square_error = np.sqrt(mean_squared_error(y_test,y_pred=))
+    
+    rmse_list.append(root_mean_square_error)
 
 correlation_score = numerical_data.corr()['Price'][:-1]
 features= []

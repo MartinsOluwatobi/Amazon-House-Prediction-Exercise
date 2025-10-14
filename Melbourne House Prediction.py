@@ -22,9 +22,7 @@ data['Distance'] = data['Distance'].fillna(value = data.groupby(['Regionname'])[
 
 #date datatype was coversion and data extraction
 data['Date'] =  pd.to_datetime(data['Date'], format ='%d-%m-%Y')
-data['Day'] = data['Date'].dt.day 
-data['Month'] = data['Date'].dt.month
-data['Year'] = data['Date'].dt.year
+data['Age'] = 2025 - data['Date'].dt.year
 data.drop(['Date'], axis = 1, inplace= True)
 
 """I observed that majority of the Houses have the same number of rooms as their bedroom. Therefore, I used rooms to fill the na value in Bedroom For scenario where Bedroom was noted to be zero, I filled that with the value of rooms on the same column. For scenarion where bedroom is greater than rooms, the value of the bedroom is replaced with the value of the rooms """
@@ -40,41 +38,47 @@ data.loc[condition, 'Rooms'] = data.loc[condition, 'Bedroom']
 data['Bathroom'] = data['Bathroom'].fillna(value= data.groupby(['Rooms','Type'])['Bathroom'].transform('mean').round(0)) 
 data['Car'] = data['Car'].fillna(data['Car'].median()) 
 data['Landsize'] = data['Landsize'].fillna(data['Landsize'].median())
+data['Postcode'] = data['Postcode'].fillna(data['Postcode'].mode()[0])
 
 # The percentage of the nan values for BuildingArea and YearrBuilt were considered to be too much and I decided to drop the columns
 
 data= data.drop(['BuildingArea','YearBuilt'],axis = 1) 
 data= data.dropna(subset= ['Landsize'])
 
-def handleNan(data,columns): 
-    #check for the skewness of the column 
-    for column in columns: 
-        column_skew_value = data[column].skew() 
-        if abs(column_skew_value)> 0.5: 
-            data[column].fillna(data[column].median(),inplace = True) 
-        else: data[column].fillna(data[column].mean(), inplace = True) 
-    return
-
 #Handling Outlied datapoint by filling them with the median value of their respective column
 
-numerical_data = data.select_dtypes(include = 'number') 
-for i in numerical_data.columns[:-1]: 
+numerical_data = data.select_dtypes(include = 'number')
+for i in numerical_data.columns: 
+    if i == 'Price':
+        continue
     Q3= data[i].quantile(0.75) 
     Q1= data[i].quantile(0.25) 
     IQR = Q3 - Q1 
     lower_limit = Q1 - 1.5 * IQR 
     higher_limit = Q3 + 1.5*IQR 
-    outliers_conditions= (data[i] < lower_limit) | (data[i] > higher_limit)]
+    outliers_conditions= (data[i] < lower_limit) | (data[i] > higher_limit)
     data.loc[outliers_conditions,i]= data[i].median()
 
+# Scaling numerical data 
+def ScaleNumericalFeatures(Feature_dataframe):
+    scalar= StandardScaler()
+    scaled = scalar.fit_transform(Feature_dataframe)
+    scaled_feature = pd.DataFrame(scaled, columns= Feature_dataframe.columns, index = Feature_dataframe.index)
+    for i in scaled_feature.columns:
+        data[i] = scaled_feature[i]
+    return
+
+ScaleNumericalFeatures(numerical_data)
+
 # OneHotEncoding Categorical data  
-categorical_data = data.select_dtypes(include = ['string','object'])
-encoder = ColumnTransformer(transformer = [('cat', OneHotEncoder(sparse_output= False, handle_unknown = 'ignore'), categorical_data)],remainder= 'passthrough'))
+categorical_data = data.select_dtypes(include = ['string','object']).columns.to_list()
+encoder = ColumnTransformer(transformers = [('cat', OneHotEncoder(sparse_output= False, handle_unknown = 'ignore'), categorical_data)],remainder= 'passthrough')
 encoded = encoder.fit_transform(data)
 encoded_array = pd.DataFrame(encoded, columns = encoder.get_feature_names_out())
+encoded_array.reset_index(drop= True , inplace = True)
 
 # Changing the columns name after encoder altered it 
-data_columns=data.select_dtypes(['number','datetime']).columns.to_list() 
+data_columns=data.select_dtypes(['number']).columns.to_list() 
 for i in range(len(data.select_dtypes(['number']).columns.to_list())):
     old_name= 'remainder__' + data_columns[i]
     new_name = data_columns[i]
@@ -83,39 +87,41 @@ for i in range(len(data.select_dtypes(['number']).columns.to_list())):
 # feature selection
 target = encoded_array['Price']
 feature = encoded_array.drop(['Price'],axis = 1)
-x_train,x_test,y_train,y_test = train_test_split(feature,target)
-x_train,x_test,y_train,y_test = train_test_split(encoded_array[feature],encoded_array['Price'])
-model = LinearRegression(); rmse_list = []
-for k in range(1,len(feature)+1):
+x_train,x_test,y_train,y_test = train_test_split(feature,target, random_state=42, test_size= 0.2)
+test_model = LinearRegression(); rmse_list = []
+for k in range(1,len(feature.columns)+1):
     selector = SelectKBest(f_regression,k = k)
-    selector.fit(encoded_array[feature],encoded_array['Price'])
+    selector.fit(x_train,y_train)
 
     x_train_selected = selector.transform(x_train)
     x_test_selected = selector.transform(x_test)
 
-    model.fit(x_train_selected,y_train)
-    y_pred = model.predict(x_test_selected)
-    root_mean_square_error = np.sqrt(mean_squared_error(y_test,y_pred=))
+    test_model.fit(x_train_selected,y_train)
+    y_pred = test_model.predict(x_test_selected)
+    test_root_mean_square_error = np.sqrt(mean_squared_error(y_test,y_pred))
     
-    rmse_list.append(root_mean_square_error)
+    rmse_list.append(test_root_mean_square_error)
 
-correlation_score = numerical_data.corr()['Price'][:-1]
-features= []
-for i in range(len(correlation_score)):
-    if abs(correlation_score[i])> 0.1:
-       features.append(numerical_data.columns[i])
-target = data['Price']
+for i in range(1,len(rmse_list)):
+    change = rmse_list[i] - rmse_list[i-1]
+    if change == 0:
+        k = i
+    break 
 
-def ScaleNumericalFeatures(Feature_dataframe):
-    scalar= StandardScaler()
-    scaled = scalar.fit_transform(Feature_dataframe)
-    scaled_feature = pd.DataFrame(scaled, columns= Feature_dataframe.columns)
-    return scaled_feature
+selector = SelectKBest(f_regression, k = k)
+selector.fit(x_train,y_train)
 
-features = ScaleNumericalFeatures(data[features])
-x_train,x_test,y_train,y_test = train_test_split(features,target, random_state = 42, test_size= 0.2)
+mask = selector.get_support()
+Features = x_train.columns[mask]
+
+# Training of model 
+
 model = LinearRegression()
-model.fit(x_train,y_train)
-
+x_train, x_test , y_train, y_test = train_test_split(encoded_array[Features], encoded_array['Price'], random_state=42, test_size= 0.2)
+model.fit(x_train, y_train)
 pred_val = model.predict(x_test)
-print(np.sqrt(mean_squared_error(pred_val,y_test)))
+root_mean_square_error = np.sqrt(mean_squared_error(y_test,pred_val))
+
+print(f'The root mean square error using Linear Regression is {root_mean_square_error}')
+
+

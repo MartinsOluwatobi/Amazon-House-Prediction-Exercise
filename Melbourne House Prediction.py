@@ -65,6 +65,8 @@ def ScaleNumericalFeatures(Feature_dataframe):
     scaled = scalar.fit_transform(Feature_dataframe)
     scaled_feature = pd.DataFrame(scaled, columns= Feature_dataframe.columns, index = Feature_dataframe.index)
     for i in scaled_feature.columns:
+        if i == 'Price':
+            continue
         data[i] = scaled_feature[i]
     return
 
@@ -102,11 +104,8 @@ for k in range(1,len(feature.columns)+1):
     
     rmse_list.append(test_root_mean_square_error)
 
-for i in range(1,len(rmse_list)):
-    change = rmse_list[i] - rmse_list[i-1]
-    if change == 0:
-        k = i
-    break 
+min_rmse =min(rmse_list)
+k =  rmse_list.index(min_rmse) + 1
 
 selector = SelectKBest(f_regression, k = k)
 selector.fit(x_train,y_train)

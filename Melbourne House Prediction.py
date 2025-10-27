@@ -2,16 +2,17 @@ import pandas as pd
 import seaborn as sns 
 import numpy as np 
 import matplotlib.pyplot as plt 
-from sklearn.linear_model import LinearRegression, RANSACRegressor, TheilSenRegressor, HuberRegressor
+from sklearn.linear_model import LinearRegression, RANSACRegressor, TheilSenRegressor, HuberRegressor, Ridge, Lasso
 from sklearn.preprocessing import StandardScaler 
 from sklearn.model_selection import train_test_split 
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_selection import f_regression, SelectKBest
-import statsmodels as sm
+import statsmodels.api as sm
 from statsmodels.robust.robust_linear_model import RLM
 import statsmodels.robust.norms 
+from sklearn.pipeline import Pipeline 
 
 #import data 
 path = r"C:\Users\marti\OneDrive\Documents\Melbourne_Housing.csv" 
@@ -134,9 +135,9 @@ x_train_with_constant = sm.add_constant( x_train)
 ols_model = sm.OLS(y_train,x_train_with_constant).fit()
 ols_residual = ols_model.resid 
 weights_wls = 1/(ols_residual**2 + 1e-8)
-wls_model = sm.WLS(y_train,wls_x_train, weights= weights_wls).fit()
+wls_model = sm.WLS(y_train,x_train_with_constant, weights= weights_wls).fit()
 x_test_with_constant = sm.add_constant(x_test)
-wls_pred_val = wls_model.predict(x_test_with_constant)
+wls_pred_val =wls_model.predict(x_test_with_constant)
 
 wls_root_mean_square_error = np.sqrt(mean_squared_error(y_test,wls_pred_val))
 wls_r2_score = r2_score(y_test,wls_pred_val)
@@ -145,26 +146,12 @@ print(f'The root mean square error of weighted linear regression is {wls_root_me
 print(f'The r squared of weighted linear regression is {wls_r2_score}')
 
 
-# Random Sampling Algorithmm
-np.random.seed(0)
-ransac_model = RANSACRegressor(residual_threshold=5.0, random_state=42)
-ransac_model.fit(x_train,y_train)
-ransac_pred_val = ransac_model.predict(x_test)
-ransac_root_mean_square_error = np.sqrt(mean_squared_error(y_test,ransac_pred_val))
-ransac_r2_score = r2_score(y_test,ransac_pred_val)
+models = [("Random Sampling Algorithm", RANSACRegressor(residual_threshold=5.0, random_state=42)),('TheilSenRegression',TheilSenRegressor(random_state= 42)),('Huber Regression', HuberRegressor()),("Lasso Regression",Lasso(random_state=42)),('Ridge Regression', Ridge(random_state=42))]
 
-#TheilsenRegresssor 
-Theil_model = TheilSenRegressor()
-Theil_model.fit(x_train,y_train)
-TheiSen_pred_val = Theil_model.predict(x_test)
-TheiSen_root_mean_square_error = np.sqrt(mean_squared_error(y_test,TheiSen_pred_val))
-TheiSen_r2_score = r2_score(y_test,TheiSen_pred_val)
-
-#HuberRegression 
-Huber_model = HuberRegressor()
-Huber_model.fit(x_train,y_train)
-Huber_pred_val = Huber_model.predict(x_test)
-Huber_root_mean_square_error = np.sqrt(mean_squared_error(y_test,Huber_pred_val))
-Huber_r2_score = r2_score(y_test,Huber_pred_val)
-
-
+for name, model in models:
+    selected_model = model
+    selected_model.fit(x_train,y_train)
+    selected_model_pred_val = selected_model.predict(x_test)
+    selected_model_rmse = np.sqrt(mean_squared_error(y_test,selected_model_pred_val))
+    selected_model_r2 = r2_score(y_test,selected_model_pred_val)
+    print(f'The rmse of {name} is {selected_model_rmse} \nThe r squared score of {name} is {selected_model_r2}')
